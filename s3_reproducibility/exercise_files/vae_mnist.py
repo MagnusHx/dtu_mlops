@@ -4,7 +4,8 @@ A simple implementation of Gaussian MLP Encoder and Decoder trained on MNIST
 """
 
 import os
-
+import hydra
+import logging
 import torch
 import torch.nn as nn
 import torchvision.transforms as transforms
@@ -14,81 +15,116 @@ from torch.utils.data import DataLoader
 from torchvision.datasets import MNIST
 from torchvision.utils import save_image
 
+log = logging.getLogger(__name__)
+
+
 # Model Hyperparameters
-dataset_path = "~/datasets"
-cuda = torch.cuda.is_available()
-DEVICE = torch.device("cuda" if cuda else "cpu")
-batch_size = 100
-x_dim = 784
-hidden_dim = 400
+@hydra.main(
+    version_base=None,
+    config_path="./conf",
+    config_name="config",
+)
+def main(cfg):
+    # -------------------------
+    # Reproducibility
+    # -------------------------
+    seed = cfg.seed
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
 
-# Data loading
-mnist_transform = transforms.Compose([transforms.ToTensor()])
+    # -------------------------
+    # Hyperparameters
+    # -------------------------
+    hp = cfg.hyperparameters
+    batch_size = hp.batch_size
+    x_dim = hp.x_dim
+    hidden_dim = hp.hidden_dim
+    latent_dim = hp.latent_dim
+    epochs = hp.epochs
+    lr = hp.learning_rate
 
-train_dataset = MNIST(dataset_path, transform=mnist_transform, train=True, download=True)
-test_dataset = MNIST(dataset_path, transform=mnist_transform, train=False, download=True)
+    log.info("Batch size: %s, Learning rate: %s, Seed: %s", batch_size, lr, seed)
 
-train_loader = DataLoader(dataset=train_dataset, batch_size=batch_size, shuffle=True)
-test_loader = DataLoader(dataset=test_dataset, batch_size=batch_size, shuffle=False)
+    # -------------------------
+    # Device
+    # -------------------------
+    DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-encoder = Encoder(input_dim=x_dim, hidden_dim=hidden_dim, latent_dim=20)
-decoder = Decoder(latent_dim=20, hidden_dim=hidden_dim, output_dim=x_dim)
+    # -------------------------
+    # Data
+    # -------------------------
+    dataset_path = "~/datasets"
+    transform = transforms.Compose([transforms.ToTensor()])
 
-model = Model(encoder=encoder, decoder=decoder).to(DEVICE)
+    train_dataset = MNIST(dataset_path, transform=transform, train=True, download=True)
+    test_dataset = MNIST(dataset_path, transform=transform, train=False, download=True)
 
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
-def loss_function(x, x_hat, mean, log_var):
-    """Elbo loss function."""
-    reproduction_loss = nn.functional.binary_cross_entropy(x_hat, x, reduction="sum")
-    kld = -0.5 * torch.sum(1 + log_var - mean.pow(2) - log_var.exp())
-    return reproduction_loss + kld
+    # -------------------------
+    # Model
+    # -------------------------
+    encoder = Encoder(x_dim, hidden_dim, latent_dim)
+    decoder = Decoder(latent_dim, hidden_dim, x_dim)
+    model = Model(encoder, decoder).to(DEVICE)
 
+    optimizer = Adam(model.parameters(), lr=lr)
 
-optimizer = Adam(model.parameters(), lr=1e-3)
+    # -------------------------
+    # Training loop
+    # -------------------------
+    log.info("Start training VAE...")
+    model.train()
 
+    for epoch in range(epochs):
+        overall_loss = 0.0
+        for batch_idx, (x, _) in enumerate(train_loader):
+            x = x.view(batch_size, x_dim).to(DEVICE)
 
-print("Start training VAE...")
-model.train()
-for epoch in range(20):
-    overall_loss = 0
-    for batch_idx, (x, _) in enumerate(train_loader):
-        if batch_idx % 100 == 0:
-            print(batch_idx)
-        x = x.view(batch_size, x_dim)
-        x = x.to(DEVICE)
+            optimizer.zero_grad()
+            x_hat, mean, log_var = model(x)
+            loss = loss_function(x, x_hat, mean, log_var)
 
-        optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
 
-        x_hat, mean, log_var = model(x)
-        loss = loss_function(x, x_hat, mean, log_var)
+            overall_loss += loss.item()
 
-        overall_loss += loss.item()
+        log.info(
+            "Epoch %s complete. Avg loss: %s",
+            epoch + 1,
+            overall_loss / len(train_loader.dataset),
+        )
 
-        loss.backward()
-        optimizer.step()
-    print(f"Epoch {epoch + 1} complete!,  Average Loss: {overall_loss / (batch_idx * batch_size)}")
-print("Finish!!")
+    log.info("Training finished")
 
-# save weights
-torch.save(model, f"{os.getcwd()}/trained_model.pt")
+    # -------------------------
+    # Save artifacts
+    # -------------------------
+    torch.save(model, "trained_model.pt")
 
-# Generate reconstructions
-model.eval()
-with torch.no_grad():
-    for batch_idx, (x, _) in enumerate(test_loader):
-        if batch_idx % 100 == 0:
-            print(batch_idx)
-        x = x.view(batch_size, x_dim)
-        x = x.to(DEVICE)
-        x_hat, _, _ = model(x)
-        break
+    # -------------------------
+    # Evaluation
+    # -------------------------
+    model.eval()
+    with torch.no_grad():
+        for batch_idx, (x, _) in enumerate(test_loader):
+            x = x.view(batch_size, x_dim).to(DEVICE)
+            x_hat, _, _ = model(x)
+            break
 
-save_image(x.view(batch_size, 1, 28, 28), "orig_data.png")
-save_image(x_hat.view(batch_size, 1, 28, 28), "reconstructions.png")
+    save_image(x.view(batch_size, 1, 28, 28), "orig_data.png")
+    save_image(x_hat.view(batch_size, 1, 28, 28), "reconstructions.png")
 
-# Generate samples
-with torch.no_grad():
-    noise = torch.randn(batch_size, 20).to(DEVICE)
-    generated_images = decoder(noise)
+    # -------------------------
+    # Sampling
+    # -------------------------
+    with torch.no_grad():
+        noise = torch.randn(batch_size, latent_dim).to(DEVICE)
+        generated_images = decoder(noise)
 
-save_image(generated_images.view(batch_size, 1, 28, 28), "generated_sample.png")
+    save_image(
+        generated_images.view(batch_size, 1, 28, 28),
+        "generated_sample.png",
+    )
