@@ -3,6 +3,7 @@
 A simple implementation of Gaussian MLP Encoder and Decoder trained on MNIST
 """
 
+import pdb
 import torch
 import torch.nn as nn
 import torchvision.transforms as transforms
@@ -26,8 +27,12 @@ epochs = 20
 # Data loading
 mnist_transform = transforms.Compose([transforms.ToTensor()])
 
-train_dataset = MNIST(dataset_path, transform=mnist_transform, train=True, download=True)
-test_dataset = MNIST(dataset_path, transform=mnist_transform, train=False, download=True)
+train_dataset = MNIST(
+    dataset_path, transform=mnist_transform, train=True, download=True
+)
+test_dataset = MNIST(
+    dataset_path, transform=mnist_transform, train=False, download=True
+)
 
 train_loader = DataLoader(dataset=train_dataset, batch_size=batch_size, shuffle=True)
 test_loader = DataLoader(dataset=test_dataset, batch_size=batch_size, shuffle=False)
@@ -54,7 +59,7 @@ class Encoder(nn.Module):
 
     def reparameterization(self, mean, var):
         """Reparameterization trick to sample z values."""
-        epsilon = torch.randn(*var.shape)
+        epsilon = torch.randn(*var.shape, device=DEVICE)
         return mean + var * epsilon
 
 
@@ -64,7 +69,7 @@ class Decoder(nn.Module):
     def __init__(self, latent_dim, hidden_dim, output_dim) -> None:
         super().__init__()
         self.FC_hidden = nn.Linear(latent_dim, hidden_dim)
-        self.FC_output = nn.Linear(latent_dim, output_dim)
+        self.FC_output = nn.Linear(hidden_dim, output_dim)
 
     def forward(self, x):
         """Forward pass of the decoder module."""
