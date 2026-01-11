@@ -2,7 +2,6 @@
 
 A simple implementation of Gaussian MLP Encoder and Decoder trained on MNIST
 """
-
 import torch
 import torch.nn as nn
 import torchvision.transforms as transforms

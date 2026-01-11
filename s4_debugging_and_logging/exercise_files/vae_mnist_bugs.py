@@ -54,7 +54,7 @@ class Encoder(nn.Module):
         h_ = torch.relu(self.FC_input(x))
         mean = self.FC_mean(h_)
         log_var = self.FC_var(h_)
-        z = self.reparameterization(mean, log_var)
+        z = self.reparameterization(mean, torch.exp(log_var))
         return z, mean, log_var
 
     def reparameterization(self, mean, var):
@@ -115,6 +115,7 @@ model.train()
 for epoch in range(epochs):
     overall_loss = 0
     for batch_idx, (x, _) in enumerate(train_loader):
+        optimizer.zero_grad()
         if batch_idx % 100 == 0:
             print(batch_idx)
         x = x.view(batch_size, x_dim)
